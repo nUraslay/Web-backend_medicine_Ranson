@@ -17,7 +17,7 @@ const (
 	StatusDeleted   Status = "удален"
 )
 
-type Service struct {
+type PancreatitisSign struct {
 	ID             int
 	Title          string
 	Description    string
@@ -29,20 +29,20 @@ type Service struct {
 	LikedByUserIDs []int
 }
 
-func (s Service) ImageURL() string {
+func (s PancreatitisSign) ImageURL() string {
 	return MinioBaseURL + s.ImageKey
 }
 
-func (s Service) VideoURL() string {
+func (s PancreatitisSign) VideoURL() string {
 	return MinioBaseURL + s.VideoKey
 }
 
 type Repository struct {
-	services []Service
+	signs []PancreatitisSign	
 }
 
 func NewRepository() (*Repository, error) {
-	services := []Service{
+	signs := []PancreatitisSign{
 		{
 			ID:             1,
 			Title:          "Возраст старше 55 лет",
@@ -74,7 +74,7 @@ func NewRepository() (*Repository, error) {
 			ImageKey:       "glucose-admission.jpg",
 			VideoKey:       "glucose-admission.mp4",
 			Status:         StatusPublished,
-			LikedByUserIDs: makeIDs(1204),
+			LikedByUserIDs: makeIDs(204),
 		},
 		{
 			ID:             4,
@@ -189,7 +189,7 @@ func NewRepository() (*Repository, error) {
 		},
 	}
 
-	return &Repository{services: services}, nil
+	return &Repository{signs: signs}, nil
 }
 
 func makeIDs(n int) []int {
@@ -200,62 +200,62 @@ func makeIDs(n int) []int {
 	return ids
 }
 
-func (r *Repository) GetPublishedServices() ([]Service, error) {
-	var result []Service
-	for _, s := range r.services {
+func (r *Repository) GetPublishedSigns() ([]PancreatitisSign, error) {
+	var result []PancreatitisSign
+	for _, s := range r.signs {
 		if s.Status == StatusPublished {
 			result = append(result, s)
 		}
 	}
 	if len(result) == 0 {
-		return nil, fmt.Errorf("нет опубликованных услуг")
+		return nil, fmt.Errorf("нет опубликованных признаков панкреатита")
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
 	return result, nil
 }
 
-func (r *Repository) GetPublishedServiceByID(id int) (Service, error) {
-	for _, s := range r.services {
+func (r *Repository) GetPublishedSignByID(id int) (PancreatitisSign, error) {
+	for _, s := range r.signs {
 		if s.ID == id && s.Status == StatusPublished {
 			return s, nil
 		}
 	}
-	return Service{}, fmt.Errorf("опубликованная услуга с id %d не найдена", id)
+	return PancreatitisSign{}, fmt.Errorf("опубликованный признак с id %d не найден", id)
 }
 
-func (r *Repository) GetNextPublishedService(currentID int) (Service, error) {
-	services, err := r.GetPublishedServices()
+func (r *Repository) GetNextPublishedSign(currentID int) (PancreatitisSign, error) {
+	signs, err := r.GetPublishedSigns()
 	if err != nil {
-		return Service{}, err
+		return PancreatitisSign{}, err
 	}
 
-	for i, s := range services {
+	for i, s := range signs {
 		if s.ID == currentID {
-			nextIndex := (i + 1) % len(services)
-			return services[nextIndex], nil
+			nextIndex := (i + 1) % len(signs)
+			return signs[nextIndex], nil
 		}
 	}
-	return Service{}, fmt.Errorf("услуга с id %d не найдена среди опубликованных", currentID)
+	return PancreatitisSign{}, fmt.Errorf("признак с id %d не найден среди опубликованных", currentID)
 }
 
-func (r *Repository) GetDraftService() (Service, error) {
-	for _, s := range r.services {
+func (r *Repository) GetDraftSign() (PancreatitisSign, error) {
+	for _, s := range r.signs {
 		if s.Status == StatusDraft {
 			return s, nil
 		}
 	}
-	return Service{}, fmt.Errorf("черновик не найден")
+	return PancreatitisSign{}, fmt.Errorf("черновик не найден")
 }
 
-func (r *Repository) GetPublishedServicesByTitle(query string) ([]Service, error) {
-	services, err := r.GetPublishedServices()
+func (r *Repository) GetPublishedSignsByTitle(query string) ([]PancreatitisSign, error) {
+	signs, err := r.GetPublishedSigns()
 	if err != nil {
 		return nil, err
 	}
 
-	var result []Service
+	var result []PancreatitisSign
 	lowerQuery := strings.ToLower(query)
-	for _, s := range services {
+	for _, s := range signs {
 		if strings.Contains(strings.ToLower(s.Title), lowerQuery) {
 			result = append(result, s)
 		}

@@ -28,12 +28,12 @@ func StartServer() {
 
 	r.Static("/static", FrontendPath)
 
-	r.GET("/feed", h.FeedHandler)
-	r.GET("/feed/:id", h.FeedHandler) // GET ленты по ID
+	r.GET("/pancreatitis-signs/feed", h.SignFeedHandler)
+	r.GET("/pancreatitis-signs/feed/:id", h.SignFeedHandler)
 
-	r.GET("/add", h.AddHandler) // получение черновика
+	r.GET("/pancreatitis-signs/add", h.SignAddHandler)
 
-	r.GET("/grid", h.GridHandler) // список всех услуг
+	r.GET("/pancreatitis-signs/grid", h.SignGridHandler)
 
 	r.Run()
 	log.Println("Server down")
