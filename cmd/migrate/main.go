@@ -4,6 +4,7 @@ import (
 	"log"
 
 	"github.com/joho/godotenv"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
@@ -41,6 +42,20 @@ func main() {
 	for _, statement := range statements {
 		if err = db.Exec(statement).Error; err != nil {
 			log.Fatalf("не удалось применить ограничение: %v\n%s", err, statement)
+		}
+	}
+
+	var usersCount int64
+	db.Model(&ds.PancreatitisUser{}).Count(&usersCount)
+	if usersCount == 0 {
+		hash, hashErr := bcrypt.GenerateFromPassword([]byte("test123"), bcrypt.DefaultCost)
+		if hashErr != nil {
+			log.Fatalf("не удалось захешировать пароль: %v", hashErr)
+		}
+
+		defaultUser := ds.PancreatitisUser{Login: "test", Password: string(hash), IsModerator: false}
+		if err = db.Create(&defaultUser).Error; err != nil {
+			log.Fatalf("не удалось создать пользователя по умолчанию: %v", err)
 		}
 	}
 

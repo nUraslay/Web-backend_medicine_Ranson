@@ -16,6 +16,8 @@ type Handler struct {
 }
 
 func NewHandler(r *repository.Repository) *Handler {
+	resolveMedia = r.MediaURL
+
 	return &Handler{
 		Repository: r,
 	}
@@ -30,6 +32,8 @@ func (h *Handler) RegisterHandler(router *gin.Engine) {
 	router.POST("/pancreatitis-signs/create", h.SignCreateHandler)
 	router.POST("/pancreatitis-signs/publish", h.SignPublishHandler)
 	router.POST("/pancreatitis-signs/delete", h.SignDeleteHandler)
+
+	h.RegisterAPI(router)
 }
 
 func (h *Handler) RegisterStatic(router *gin.Engine) {

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 
@@ -26,7 +28,14 @@ func main() {
 		logrus.Fatal("не найден .env или в нем нет DB_HOST: запускайте команду из папки Web-backend_medicine_Ranson")
 	}
 
-	rep, err := repository.New(postgresString)
+	rep, err := repository.New(&repository.RepositorySettings{
+		PostgresDSN:     postgresString,
+		MinioEndpoint:   os.Getenv("MINIO_ENDPOINT"),
+		MinioAccessKey:  os.Getenv("MINIO_ACCESS_KEY"),
+		MinioSecretKey:  os.Getenv("MINIO_SECRET_KEY"),
+		MinioBucketName: os.Getenv("MINIO_BUCKET_NAME"),
+		MinioPublicURL:  os.Getenv("MINIO_PUBLIC_URL"),
+	})
 	if err != nil {
 		logrus.Fatalf("error initializing repository: %v", err)
 	}

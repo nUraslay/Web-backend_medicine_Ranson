@@ -22,11 +22,10 @@ import (
 const (
 	defaultImageURL = "/static/img/default_pancreatitis_sign.jpg"
 	defaultVideoURL = "/static/video/default_pancreatitis_sign.mp4"
-
 	imageUploadDir = "/img/uploads"
 	videoUploadDir = "/video/uploads"
-	maxImageSize   = 5 << 20 
-	maxVideoSize   = 50 << 20 
+	maxImageSize   = 5 << 20  // 5 МБ
+	maxVideoSize   = 50 << 20 // 50 МБ
 )
 
 var (
@@ -40,7 +39,7 @@ type SignFeedView struct {
 	Description string
 	VideoURL    string
 	LikesCount  int
-	ThresholdText string 
+	ThresholdText string
 	Stage         string 
 }
 
@@ -52,11 +51,13 @@ type SignCardView struct {
 	LikesCount int
 }
 
+var resolveMedia = func(value string) string { return value }
+
 func urlOrDefault(url string, defaultURL string) string {
 	if strings.TrimSpace(url) == "" {
 		return defaultURL
 	}
-	return url
+	return resolveMedia(url)
 }
 
 func toFeedView(s ds.PancreatitisSign, likesCount int) SignFeedView {
@@ -141,7 +142,6 @@ func (h *Handler) SignGridHandler(ctx *gin.Context) {
 	filterParam := strings.TrimSpace(ctx.Query("filter"))
 
 	const sliderMax = 400
-
 	sliderValue := sliderMax
 	var thresholdFilter *float64
 	if raw := strings.TrimSpace(ctx.Query("max_value")); raw != "" {
@@ -278,6 +278,7 @@ func (h *Handler) SignDeleteHandler(ctx *gin.Context) {
 	ctx.Redirect(http.StatusFound, "/pancreatitis-signs/grid")
 }
 
+// uploadError - ошибка валидации загружаемого файла (показывается пользователю, код 400)
 type uploadError string
 
 func (e uploadError) Error() string { return string(e) }

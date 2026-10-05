@@ -57,19 +57,17 @@ func (r *Repository) GetMaxThreshold() (float64, error) {
 		return 0, err
 	}
 
-	return max.Float64, nil // если записей нет, будет 0
+	return max.Float64, nil 
 }
 
 func (r *Repository) GetPublishedSignByID(id int) (*ds.PancreatitisSign, error) {
 	return r.firstOrNil(r.db.Where("id = ? AND status = ?", id, ds.StatusPublished))
 }
 
-// GetFirstPublishedSign возвращает первый опубликованный признак (ORM)
 func (r *Repository) GetFirstPublishedSign() (*ds.PancreatitisSign, error) {
 	return r.firstOrNil(r.db.Where("status = ?", ds.StatusPublished))
 }
 
-// GetNextPublishedSign возвращает следующий за currentID опубликованный признак. (ORM)
 func (r *Repository) GetNextPublishedSign(currentID int) (*ds.PancreatitisSign, error) {
 	next, err := r.firstOrNil(r.db.Where("status = ? AND id > ?", ds.StatusPublished, currentID))
 	if err != nil {
@@ -82,18 +80,15 @@ func (r *Repository) GetNextPublishedSign(currentID int) (*ds.PancreatitisSign, 
 	return r.GetFirstPublishedSign()
 }
 
-// GetDraftSign возвращает черновик пользователя или nil, если черновика нет (ORM)
 func (r *Repository) GetDraftSign(userID uint) (*ds.PancreatitisSign, error) {
 	return r.firstOrNil(r.db.Where("creator_id = ? AND status = ?", userID, ds.StatusDraft))
 }
 
-// likesCountRow — строка результата подсчета лайков по признакам
 type likesCountRow struct {
 	SignID uint
 	Count  int
 }
 
-// GetLikesCounts возвращает количество лайков для каждого признака (ORM)
 func (r *Repository) GetLikesCounts() (map[uint]int, error) {
 	var rows []likesCountRow
 
@@ -113,7 +108,6 @@ func (r *Repository) GetLikesCounts() (map[uint]int, error) {
 	return counts, nil
 }
 
-// GetLikesCount возвращает количество лайков одного признака (ORM)
 func (r *Repository) GetLikesCount(signID uint) (int, error) {
 	var count int64
 
@@ -125,8 +119,6 @@ func (r *Repository) GetLikesCount(signID uint) (int, error) {
 	return int(count), nil
 }
 
-// CreateDraftSign создает черновик признака: указаны название и (необязательно) загруженные фото/видео,
-// остальные поля заполняются при публикации. Пустые imageURL/videoURL означают "использовать файлы по умолчанию" (ORM)
 func (r *Repository) CreateDraftSign(title string, imageURL string, videoURL string, creatorID uint) (*ds.PancreatitisSign, error) {
 	sign := ds.PancreatitisSign{
 		Title:     title,
@@ -144,7 +136,6 @@ func (r *Repository) CreateDraftSign(title string, imageURL string, videoURL str
 	return &sign, nil
 }
 
-// PublishSign заполняет черновик и публикует его: меняет статус на "опубликован" и ставит дату формирования (ORM).
 func (r *Repository) PublishSign(id uint, title string, description string, stage string, thresholdValue float64) error {
 	result := r.db.Model(&ds.PancreatitisSign{}).
 		Where("id = ? AND status = ?", id, ds.StatusDraft).
@@ -166,7 +157,6 @@ func (r *Repository) PublishSign(id uint, title string, description string, stag
 	return nil
 }
 
-// DeleteSign логически удаляет опубликованный признак: меняет статус на "удален".Выполняется обычным SQL-запросом UPDATE, без ORM
 func (r *Repository) DeleteSign(id uint) error {
 	result := r.db.Exec(
 		"UPDATE pancreatitis_signs SET status = ? WHERE id = ? AND status = ?",
@@ -180,4 +170,77 @@ func (r *Repository) DeleteSign(id uint) error {
 	}
 
 	return nil
+}
+
+func (r *Repository) GetSignByID(id int) (*ds.PancreatitisSign, error) {
+	return r.firstOrNil(r.db.Where("id = ?", id))
+}
+
+func (r *Repository) AddSign(sign *ds.PancreatitisSign) error {
+	err := r.db.Create(sign).Error
+	if err != nil {
+		return fmt.Errorf("ошибка при добавлении признака: %w", err)
+	}
+
+	return nil
+}
+
+func (r *Repository) PublishDraftSign(id uint, creatorID uint, sign *ds.PancreatitisSign) error {
+	result := r.db.Model(&ds.PancreatitisSign{}).
+		Where("id = ? AND creator_id = ? AND status = ?", id, creatorID, ds.StatusDraft).
+		Updates(map[string]interface{}{
+			"title":           sign.Title,
+			"description":     sign.Description,
+			"stage":           sign.Stage,
+			"threshold_value": sign.ThresholdValue,
+			"status":          ds.StatusPublished,
+			"formed_at":       time.Now(),
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrSignNotFound
+	}
+
+	return nil
+}
+
+func (r *Repository) SoftDeleteSign(id uint, creatorID uint) error {
+	result := r.db.Model(&ds.PancreatitisSign{}).
+		Where("id = ? AND creator_id = ? AND status IN ?", id, creatorID, []string{ds.StatusDraft, ds.StatusPublished}).
+		Update("status", ds.StatusDeleted)
+	if result.Error != nil {
+		return fmt.Errorf("ошибка при удалении признака с id %d: %w", id, result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return ErrSignNotFound
+	}
+
+	return nil
+}
+
+func (r *Repository) SetLike(userID uint, signID uint, like bool) error {
+	if like {
+		row := ds.PancreatitisSignLike{UserID: userID, SignID: signID}
+		return r.db.Where("user_id = ? AND sign_id = ?", userID, signID).FirstOrCreate(&row).Error
+	}
+
+	return r.db.Where("user_id = ? AND sign_id = ?", userID, signID).Delete(&ds.PancreatitisSignLike{}).Error
+}
+
+func (r *Repository) GetLikedSignIDs(userID uint) (map[uint]bool, error) {
+	var ids []uint
+
+	err := r.db.Model(&ds.PancreatitisSignLike{}).Where("user_id = ?", userID).Pluck("sign_id", &ids).Error
+	if err != nil {
+		return nil, err
+	}
+
+	liked := make(map[uint]bool, len(ids))
+	for _, id := range ids {
+		liked[id] = true
+	}
+
+	return liked, nil
 }
