@@ -2,9 +2,14 @@ package handler
 
 import (
 	"errors"
+	"fmt"
+	"math"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
@@ -17,6 +22,16 @@ import (
 const (
 	defaultImageURL = "/static/img/default_pancreatitis_sign.jpg"
 	defaultVideoURL = "/static/video/default_pancreatitis_sign.mp4"
+
+	imageUploadDir = "/img/uploads"
+	videoUploadDir = "/video/uploads"
+	maxImageSize   = 5 << 20 
+	maxVideoSize   = 50 << 20 
+)
+
+var (
+	allowedImageExt = map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".webp": true, ".gif": true}
+	allowedVideoExt = map[string]bool{".mp4": true, ".webm": true, ".ogg": true}
 )
 
 type SignFeedView struct {
@@ -25,6 +40,8 @@ type SignFeedView struct {
 	Description string
 	VideoURL    string
 	LikesCount  int
+	ThresholdText string 
+	Stage         string 
 }
 
 type SignCardView struct {
@@ -43,12 +60,17 @@ func urlOrDefault(url string, defaultURL string) string {
 }
 
 func toFeedView(s ds.PancreatitisSign, likesCount int) SignFeedView {
+	stage := strings.TrimSpace(s.Stage)
+
 	return SignFeedView{
 		ID:          s.ID,
 		Title:       s.Title,
 		Description: s.Description,
 		VideoURL:    urlOrDefault(s.VideoURL, defaultVideoURL),
 		LikesCount:  likesCount,
+
+		ThresholdText: strconv.FormatFloat(s.ThresholdValue, 'f', -1, 64),
+		Stage:         stage,
 	}
 }
 
@@ -112,22 +134,25 @@ func (h *Handler) SignAddHandler(ctx *gin.Context) {
 		return
 	}
 
-	ctx.HTML(http.StatusOK, "add_pancreatitis.html", gin.H{
-		"Draft": draft,
-	})
+	ctx.HTML(http.StatusOK, "add_pancreatitis.html", addPageData(draft, ""))
 }
 
 func (h *Handler) SignGridHandler(ctx *gin.Context) {
-	filterParam := ctx.Query("filter")
+	filterParam := strings.TrimSpace(ctx.Query("filter"))
 
-	var signs []ds.PancreatitisSign
-	var err error
+	const sliderMax = 400
 
-	if filterParam == "" {
-		signs, err = h.Repository.GetPublishedSigns()
-	} else {
-		signs, err = h.Repository.SearchPublishedSignsByTitle(filterParam)
+	sliderValue := sliderMax
+	var thresholdFilter *float64
+	if raw := strings.TrimSpace(ctx.Query("max_value")); raw != "" {
+		v, convErr := strconv.ParseFloat(raw, 64)
+		if convErr == nil && v >= 0 {
+			thresholdFilter = &v
+			sliderValue = int(math.Min(v, float64(sliderMax)))
+		}
 	}
+
+	signs, err := h.Repository.GetPublishedSigns(filterParam, thresholdFilter)
 	if err != nil {
 		h.errorHandler(ctx, http.StatusInternalServerError, err)
 		return
@@ -145,17 +170,18 @@ func (h *Handler) SignGridHandler(ctx *gin.Context) {
 	}
 
 	ctx.HTML(http.StatusOK, "grid_pancreatitis.html", gin.H{
-		"Signs":  cards,
-		"Filter": filterParam,
+		"Signs":       cards,
+		"Filter":      filterParam,
+		"SliderMax":   sliderMax,
+		"SliderValue": sliderValue,
 	})
 }
 
 func (h *Handler) SignCreateHandler(ctx *gin.Context) {
 	title := strings.TrimSpace(ctx.PostForm("title"))
 	if title == "" || utf8.RuneCountInString(title) > 100 {
-		ctx.HTML(http.StatusBadRequest, "add_pancreatitis.html", gin.H{
-			"Error": "Название обязательно и не должно быть длиннее 100 символов",
-		})
+		ctx.HTML(http.StatusBadRequest, "add_pancreatitis.html", addPageData(nil,
+			"Название обязательно и не должно быть длиннее 100 символов"))
 		return
 	}
 
@@ -166,8 +192,23 @@ func (h *Handler) SignCreateHandler(ctx *gin.Context) {
 	}
 
 	if draft == nil {
-		_, err = h.Repository.CreateDraftSign(title, currentUserID)
+		imageURL, imagePath, err := saveUpload(ctx, "image", imageUploadDir, allowedImageExt, maxImageSize)
 		if err != nil {
+			h.uploadErrorHandler(ctx, err)
+			return
+		}
+
+		videoURL, videoPath, err := saveUpload(ctx, "video", videoUploadDir, allowedVideoExt, maxVideoSize)
+		if err != nil {
+			removeFile(imagePath)
+			h.uploadErrorHandler(ctx, err)
+			return
+		}
+
+		_, err = h.Repository.CreateDraftSign(title, imageURL, videoURL, currentUserID)
+		if err != nil {
+			removeFile(imagePath)
+			removeFile(videoPath)
 			h.errorHandler(ctx, http.StatusInternalServerError, err)
 			return
 		}
@@ -204,10 +245,7 @@ func (h *Handler) SignPublishHandler(ctx *gin.Context) {
 		validationError = "Пороговое значение должно быть числом от 0 до 99999999"
 	}
 	if validationError != "" {
-		ctx.HTML(http.StatusBadRequest, "add_pancreatitis.html", gin.H{
-			"Error": validationError,
-			"Draft": draft,
-		})
+		ctx.HTML(http.StatusBadRequest, "add_pancreatitis.html", addPageData(draft, validationError))
 		return
 	}
 
@@ -238,4 +276,75 @@ func (h *Handler) SignDeleteHandler(ctx *gin.Context) {
 	}
 
 	ctx.Redirect(http.StatusFound, "/pancreatitis-signs/grid")
+}
+
+type uploadError string
+
+func (e uploadError) Error() string { return string(e) }
+
+func addPageData(draft *ds.PancreatitisSign, errMsg string) gin.H {
+	data := gin.H{
+		"Draft":           draft,
+		"DefaultImageURL": defaultImageURL,
+		"DefaultVideoURL": defaultVideoURL,
+		"ImageURL":        defaultImageURL,
+		"VideoURL":        defaultVideoURL,
+	}
+	if draft != nil {
+		data["ImageURL"] = urlOrDefault(draft.ImageURL, defaultImageURL)
+		data["VideoURL"] = urlOrDefault(draft.VideoURL, defaultVideoURL)
+	}
+	if errMsg != "" {
+		data["Error"] = errMsg
+	}
+	return data
+}
+
+func saveUpload(ctx *gin.Context, field string, subDir string, allowedExt map[string]bool, maxSize int64) (string, string, error) {
+	file, err := ctx.FormFile(field)
+	if errors.Is(err, http.ErrMissingFile) {
+		return "", "", nil
+	}
+	if err != nil {
+		return "", "", err
+	}
+	if file.Size == 0 {
+		return "", "", nil
+	}
+
+	ext := strings.ToLower(filepath.Ext(file.Filename))
+	if !allowedExt[ext] {
+		return "", "", uploadError("Недопустимый формат файла: " + file.Filename)
+	}
+	if file.Size > maxSize {
+		return "", "", uploadError(fmt.Sprintf("Файл %s слишком большой (максимум %d МБ)", file.Filename, maxSize>>20))
+	}
+
+	dir := filepath.Join(FrontendPath, subDir)
+	if err = os.MkdirAll(dir, 0o755); err != nil {
+		return "", "", err
+	}
+
+	name := fmt.Sprintf("%d_%d%s", currentUserID, time.Now().UnixNano(), ext)
+	diskPath := filepath.Join(dir, name)
+	if err = ctx.SaveUploadedFile(file, diskPath); err != nil {
+		return "", "", err
+	}
+
+	return "/static" + subDir + "/" + name, diskPath, nil
+}
+
+func removeFile(path string) {
+	if path != "" {
+		_ = os.Remove(path)
+	}
+}
+
+func (h *Handler) uploadErrorHandler(ctx *gin.Context, err error) {
+	var ue uploadError
+	if errors.As(err, &ue) {
+		ctx.HTML(http.StatusBadRequest, "add_pancreatitis.html", addPageData(nil, ue.Error()))
+		return
+	}
+	h.errorHandler(ctx, http.StatusInternalServerError, err)
 }

@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"time"
@@ -26,10 +27,18 @@ func (r *Repository) firstOrNil(query *gorm.DB) (*ds.PancreatitisSign, error) {
 	return &sign, nil
 }
 
-func (r *Repository) GetPublishedSigns() ([]ds.PancreatitisSign, error) {
+func (r *Repository) GetPublishedSigns(title string, maxThreshold *float64) ([]ds.PancreatitisSign, error) {
 	var signs []ds.PancreatitisSign
 
-	err := r.db.Where("status = ?", ds.StatusPublished).Order("id").Find(&signs).Error
+	query := r.db.Where("status = ?", ds.StatusPublished)
+	if title != "" {
+		query = query.Where("title ILIKE ?", "%"+title+"%")
+	}
+	if maxThreshold != nil {
+		query = query.Where("threshold_value <= ?", *maxThreshold)
+	}
+
+	err := query.Order("id").Find(&signs).Error
 	if err != nil {
 		return nil, err
 	}
@@ -37,21 +46,20 @@ func (r *Repository) GetPublishedSigns() ([]ds.PancreatitisSign, error) {
 	return signs, nil
 }
 
-func (r *Repository) SearchPublishedSignsByTitle(title string) ([]ds.PancreatitisSign, error) {
-	var signs []ds.PancreatitisSign
+func (r *Repository) GetMaxThreshold() (float64, error) {
+	var max sql.NullFloat64
 
-	err := r.db.
-		Where("status = ? AND title ILIKE ?", ds.StatusPublished, "%"+title+"%").
-		Order("id").
-		Find(&signs).Error
+	err := r.db.Model(&ds.PancreatitisSign{}).
+		Where("status = ?", ds.StatusPublished).
+		Select("MAX(threshold_value)").
+		Scan(&max).Error
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 
-	return signs, nil
+	return max.Float64, nil // если записей нет, будет 0
 }
 
-// GetPublishedSignByID возвращает опубликованный признак по id (ORM).
 func (r *Repository) GetPublishedSignByID(id int) (*ds.PancreatitisSign, error) {
 	return r.firstOrNil(r.db.Where("id = ? AND status = ?", id, ds.StatusPublished))
 }
@@ -117,10 +125,13 @@ func (r *Repository) GetLikesCount(signID uint) (int, error) {
 	return int(count), nil
 }
 
-// CreateDraftSign создает черновик признака: указано только название, остальные поля заполняются при публикации.(ORM)
-func (r *Repository) CreateDraftSign(title string, creatorID uint) (*ds.PancreatitisSign, error) {
+// CreateDraftSign создает черновик признака: указаны название и (необязательно) загруженные фото/видео,
+// остальные поля заполняются при публикации. Пустые imageURL/videoURL означают "использовать файлы по умолчанию" (ORM)
+func (r *Repository) CreateDraftSign(title string, imageURL string, videoURL string, creatorID uint) (*ds.PancreatitisSign, error) {
 	sign := ds.PancreatitisSign{
 		Title:     title,
+		ImageURL:  imageURL,
+		VideoURL:  videoURL,
 		Status:    ds.StatusDraft,
 		CreatorID: creatorID,
 	}
