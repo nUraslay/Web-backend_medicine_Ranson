@@ -1,14 +1,17 @@
 package main
 
 import (
+	"context"
 	"os"
 
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 
+	_ "ranson-backend/docs"
 	"ranson-backend/internal/app/config"
 	"ranson-backend/internal/app/dsn"
 	"ranson-backend/internal/app/handler"
+	"ranson-backend/internal/app/redis"
 	"ranson-backend/internal/app/repository"
 	"ranson-backend/internal/pkg"
 )
@@ -40,7 +43,13 @@ func main() {
 		logrus.Fatalf("error initializing repository: %v", err)
 	}
 
-	hand := handler.NewHandler(rep)
+	redisClient, err := redis.New(context.Background(), conf.Redis)
+	if err != nil {
+		logrus.Fatalf("error connecting redis: %v", err)
+	}
+	defer redisClient.Close()
+
+	hand := handler.NewHandler(rep, redisClient, conf.JWT)
 
 	application := pkg.NewApp(conf, router, hand)
 	application.RunApp()

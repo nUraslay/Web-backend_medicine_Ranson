@@ -2,8 +2,12 @@ package handler
 
 import (
 	"github.com/gin-gonic/gin"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 	"github.com/sirupsen/logrus"
 
+	"ranson-backend/internal/app/config"
+	"ranson-backend/internal/app/redis"
 	"ranson-backend/internal/app/repository"
 )
 
@@ -13,13 +17,17 @@ const currentUserID uint = 1
 
 type Handler struct {
 	Repository *repository.Repository
+	Redis      *redis.Client
+	JWT        config.JWTConfig
 }
 
-func NewHandler(r *repository.Repository) *Handler {
+func NewHandler(r *repository.Repository, rd *redis.Client, jwtCfg config.JWTConfig) *Handler {
 	resolveMedia = r.MediaURL
 
 	return &Handler{
 		Repository: r,
+		Redis:      rd,
+		JWT:        jwtCfg,
 	}
 }
 
@@ -34,6 +42,9 @@ func (h *Handler) RegisterHandler(router *gin.Engine) {
 	router.POST("/pancreatitis-signs/delete", h.SignDeleteHandler)
 
 	h.RegisterAPI(router)
+
+	// Swagger UI: http://localhost:8080/swagger/index.html
+	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler, ginSwagger.URL("http://localhost:8080/swagger/doc.json")))
 }
 
 func (h *Handler) RegisterStatic(router *gin.Engine) {

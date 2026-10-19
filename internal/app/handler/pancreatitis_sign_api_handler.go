@@ -46,7 +46,7 @@ func boolToInt(value bool) int {
 	return 0
 }
 
-func toSignSerializer(s ds.PancreatitisSign, likesCount int, liked bool) SignSerializer {
+func toSignSerializer(s ds.PancreatitisSign, likesCount int, liked bool, userID uint) SignSerializer {
 	return SignSerializer{
 		ID:             s.ID,
 		Title:          s.Title,
@@ -60,22 +60,26 @@ func toSignSerializer(s ds.PancreatitisSign, likesCount int, liked bool) SignSer
 		FormedAt:       s.FormedAt,
 		LikesCount:     likesCount,
 		IsLiked:        boolToInt(liked),
-		IsMine:         boolToInt(s.CreatorID == CurrentUserID()),
+		IsMine:         boolToInt(userID != 0 && s.CreatorID == userID),
 	}
 }
 
 func (h *Handler) RegisterAPI(router *gin.Engine) {
 	api := router.Group("/api")
-	api.GET("/pancreatitis-signs", h.GetSignsAPI)
-	api.GET("/pancreatitis-signs/feed", h.GetFeedAPI)
-	api.GET("/pancreatitis-signs/draft", h.GetDraftAPI)
-	api.POST("/pancreatitis-signs", h.AddSignAPI)
-	api.PUT("/pancreatitis-signs/:id/publish", h.PublishSignAPI)
-	api.DELETE("/pancreatitis-signs/:id", h.DeleteSignAPI)
-	api.POST("/pancreatitis-signs/:id/like", h.LikeSignAPI)
+
+	api.GET("/pancreatitis-signs", h.AuthOptional(), h.GetSignsAPI)
+	api.GET("/pancreatitis-signs/feed", h.AuthOptional(), h.GetFirstFeedAPI)
+	api.GET("/pancreatitis-signs/feed/:id", h.AuthOptional(), h.GetFeedAPI)
 	api.POST("/users", h.RegisterUserAPI)
 	api.POST("/auth/login", h.LoginAPI)
-	api.POST("/auth/logout", h.LogoutAPI)
+
+	creator := api.Group("", h.AuthRequired())
+	creator.GET("/pancreatitis-signs/draft", h.GetDraftAPI)
+	creator.POST("/pancreatitis-signs", h.AddSignAPI)
+	creator.PUT("/pancreatitis-signs/:id/publish", h.PublishSignAPI)
+	creator.DELETE("/pancreatitis-signs/:id", h.DeleteSignAPI)
+	creator.POST("/pancreatitis-signs/:id/like", h.LikeSignAPI)
+	creator.POST("/auth/logout", h.LogoutAPI)
 }
 
 func parseForm(ctx *gin.Context) error {
@@ -199,6 +203,15 @@ func applySignInput(sign *ds.PancreatitisSign, input signInput) {
 	}
 }
 
+func readCreateSignTitle(ctx *gin.Context) (string, error) {
+	title := strings.TrimSpace(ctx.Request.FormValue("title"))
+	if title == "" || utf8.RuneCountInString(title) > 100 {
+		return "", errors.New("title: обязательное поле, не длиннее 100 символов")
+	}
+
+	return title, nil
+}
+
 func (h *Handler) findOwnSign(ctx *gin.Context, id int, userID uint) (*ds.PancreatitisSign, bool) {
 	sign, err := h.Repository.GetSignByID(id)
 	if err != nil {
@@ -230,15 +243,21 @@ func (h *Handler) publishedSignsResponse(ctx *gin.Context, title string, maxThre
 		return
 	}
 
-	liked, err := h.Repository.GetLikedSignIDs(CurrentUserID())
-	if err != nil {
-		h.errorHandler(ctx, http.StatusInternalServerError, err)
-		return
+	userID := userIDFromContext(ctx)
+
+
+	liked := map[uint]bool{}
+	if userID != 0 {
+		liked, err = h.Repository.GetLikedSignIDs(userID)
+		if err != nil {
+			h.errorHandler(ctx, http.StatusInternalServerError, err)
+			return
+		}
 	}
 
 	items := make([]SignSerializer, 0, len(signs))
 	for _, s := range signs {
-		items = append(items, toSignSerializer(s, likesCounts[s.ID], liked[s.ID]))
+		items = append(items, toSignSerializer(s, likesCounts[s.ID], liked[s.ID], userID))
 	}
 
 	ctx.JSON(http.StatusOK, gin.H{
@@ -263,12 +282,67 @@ func (h *Handler) GetSignsAPI(ctx *gin.Context) {
 	h.publishedSignsResponse(ctx, title, maxThreshold)
 }
 
-func (h *Handler) GetFeedAPI(ctx *gin.Context) {
-	h.publishedSignsResponse(ctx, "", nil)
+func (h *Handler) GetFirstFeedAPI(ctx *gin.Context) {
+	h.GetFeedAPI(ctx)
 }
 
+func (h *Handler) GetFeedAPI(ctx *gin.Context) {
+	userID := userIDFromContext(ctx)
+
+	idParam := ctx.Param("id")
+	nextParam := ctx.Query("next")
+
+	var sign *ds.PancreatitisSign
+	var err error
+
+	if idParam == "" {
+		sign, err = h.Repository.GetFirstPublishedSign()
+	} else {
+		id, convErr := strconv.Atoi(idParam)
+		if convErr != nil || id <= 0 {
+			h.errorHandler(ctx, http.StatusBadRequest, errors.New("некорректный id: нужно целое число больше 0"))
+			return
+		}
+
+		if nextParam == "true" {
+			sign, err = h.Repository.GetNextPublishedSign(id)
+		} else {
+			sign, err = h.Repository.GetPublishedSignByID(id)
+		}
+	}
+	if err != nil {
+		h.errorHandler(ctx, http.StatusInternalServerError, err)
+		return
+	}
+	if sign == nil {
+		h.errorHandler(ctx, http.StatusNotFound, repository.ErrSignNotFound)
+		return
+	}
+
+	likesCount, err := h.Repository.GetLikesCount(sign.ID)
+	if err != nil {
+		h.errorHandler(ctx, http.StatusInternalServerError, err)
+		return
+	}
+
+	liked := map[uint]bool{}
+	if userID != 0 {
+		liked, err = h.Repository.GetLikedSignIDs(userID)
+		if err != nil {
+			h.errorHandler(ctx, http.StatusInternalServerError, err)
+			return
+		}
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data":   toSignSerializer(*sign, likesCount, liked[sign.ID], userID),
+	})
+}
 func (h *Handler) GetDraftAPI(ctx *gin.Context) {
-	draft, err := h.Repository.GetDraftSign(CurrentUserID())
+	userID := userIDFromContext(ctx)
+
+	draft, err := h.Repository.GetDraftSign(userID)
 	if err != nil {
 		h.errorHandler(ctx, http.StatusInternalServerError, err)
 		return
@@ -280,25 +354,21 @@ func (h *Handler) GetDraftAPI(ctx *gin.Context) {
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"status": "success",
-		"data":   toSignSerializer(*draft, 0, false),
+		"data":   toSignSerializer(*draft, 0, false, userID),
 	})
 }
 
 func (h *Handler) AddSignAPI(ctx *gin.Context) {
-	userID := CurrentUserID()
+	userID := userIDFromContext(ctx)
 
 	if err := parseForm(ctx); err != nil {
 		h.errorHandler(ctx, http.StatusBadRequest, err)
 		return
 	}
 
-	input, err := readSignInput(ctx)
+	title, err := readCreateSignTitle(ctx)
 	if err != nil {
 		h.errorHandler(ctx, http.StatusBadRequest, err)
-		return
-	}
-	if input.Title == nil {
-		h.errorHandler(ctx, http.StatusBadRequest, errors.New("title: обязательное поле"))
 		return
 	}
 
@@ -342,10 +412,10 @@ func (h *Handler) AddSignAPI(ctx *gin.Context) {
 	}
 
 	sign := ds.PancreatitisSign{
+		Title:     title,
 		Status:    ds.StatusDraft,
 		CreatorID: userID,
 	}
-	applySignInput(&sign, input)
 
 	if imageHeader != nil {
 		sign.ImageURL, err = h.Repository.UploadMedia(imageHeader, "image", imageType)
@@ -372,13 +442,31 @@ func (h *Handler) AddSignAPI(ctx *gin.Context) {
 
 	ctx.JSON(http.StatusCreated, gin.H{
 		"status":  "success",
-		"data":    toSignSerializer(sign, 0, false),
+		"data":    toSignSerializer(sign, 0, false, userID),
 		"message": "черновик успешно создан",
 	})
 }
 
+// PublishSignAPI godoc
+// @Summary      Опубликовать услугу
+// @Tags         pancreatitis-signs
+// @Security     BearerAuth
+// @Accept       mpfd
+// @Produce      json
+// @Param        id               path      int     true   "ID"
+// @Param        title            formData  string  false  "Название"
+// @Param        description      formData  string  false  "Описание"
+// @Param        stage            formData  string  false  "Стадия"
+// @Param        threshold_value  formData  number  false  "Пороговое значение"
+// @Success      200  {object}  SignResponse
+// @Failure      400  {object}  ErrorResponse
+// @Failure      401  {object}  ErrorResponse
+// @Failure      403  {object}  ErrorResponse
+// @Failure      404  {object}  ErrorResponse
+// @Failure      409  {object}  ErrorResponse
+// @Router       /pancreatitis-signs/{id}/publish [put]
 func (h *Handler) PublishSignAPI(ctx *gin.Context) {
-	userID := CurrentUserID()
+	userID := userIDFromContext(ctx)
 
 	id, ok := h.parseIDParam(ctx)
 	if !ok {
@@ -430,13 +518,25 @@ func (h *Handler) PublishSignAPI(ctx *gin.Context) {
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"status":  "success",
-		"data":    toSignSerializer(*published, 0, false),
+		"data":    toSignSerializer(*published, 0, false, userID),
 		"message": "признак опубликован",
 	})
 }
 
+// DeleteSignAPI godoc
+// @Summary      Удалить услугу
+// @Tags         pancreatitis-signs
+// @Security     BearerAuth
+// @Produce      json
+// @Param        id  path  int  true  "ID"
+// @Success      200  {object}  MessageResponse
+// @Failure      400  {object}  ErrorResponse
+// @Failure      401  {object}  ErrorResponse
+// @Failure      403  {object}  ErrorResponse
+// @Failure      404  {object}  ErrorResponse
+// @Router       /pancreatitis-signs/{id} [delete]
 func (h *Handler) DeleteSignAPI(ctx *gin.Context) {
-	userID := CurrentUserID()
+	userID := userIDFromContext(ctx)
 
 	id, ok := h.parseIDParam(ctx)
 	if !ok {
@@ -464,8 +564,21 @@ func (h *Handler) DeleteSignAPI(ctx *gin.Context) {
 	})
 }
 
+// LikeSignAPI godoc
+// @Summary      Поставить или снять лайк
+// @Tags         pancreatitis-signs
+// @Security     BearerAuth
+// @Accept       mpfd
+// @Produce      json
+// @Param        id    path      int     true  "ID"
+// @Param        like  formData  string  true  "0 или 1"
+// @Success      200  {object}  LikeResponse
+// @Failure      400  {object}  ErrorResponse
+// @Failure      401  {object}  ErrorResponse
+// @Failure      404  {object}  ErrorResponse
+// @Router       /pancreatitis-signs/{id}/like [post]
 func (h *Handler) LikeSignAPI(ctx *gin.Context) {
-	userID := CurrentUserID()
+	userID := userIDFromContext(ctx)
 
 	id, ok := h.parseIDParam(ctx)
 	if !ok {

@@ -278,7 +278,6 @@ func (h *Handler) SignDeleteHandler(ctx *gin.Context) {
 	ctx.Redirect(http.StatusFound, "/pancreatitis-signs/grid")
 }
 
-// uploadError - ошибка валидации загружаемого файла (показывается пользователю, код 400)
 type uploadError string
 
 func (e uploadError) Error() string { return string(e) }
