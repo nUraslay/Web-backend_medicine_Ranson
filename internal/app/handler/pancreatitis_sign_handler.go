@@ -320,7 +320,7 @@ func saveUpload(ctx *gin.Context, field string, subDir string, allowedExt map[st
 		return "", "", uploadError(fmt.Sprintf("Файл %s слишком большой (максимум %d МБ)", file.Filename, maxSize>>20))
 	}
 
-	dir := filepath.Join(FrontendPath, subDir)
+	dir := filepath.Join(TemplatesPath, subDir)
 	if err = os.MkdirAll(dir, 0o755); err != nil {
 		return "", "", err
 	}

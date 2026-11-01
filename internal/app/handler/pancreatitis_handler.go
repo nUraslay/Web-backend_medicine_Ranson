@@ -11,7 +11,7 @@ import (
 	"ranson-backend/internal/app/repository"
 )
 
-const FrontendPath = "../Web-frontend_medicine_Ranson"
+const TemplatesPath = "./templates"
 
 const currentUserID uint = 1
 
@@ -43,13 +43,12 @@ func (h *Handler) RegisterHandler(router *gin.Engine) {
 
 	h.RegisterAPI(router)
 
-	// Swagger UI: http://localhost:8080/swagger/index.html
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler, ginSwagger.URL("http://localhost:8080/swagger/doc.json")))
 }
 
 func (h *Handler) RegisterStatic(router *gin.Engine) {
-	router.LoadHTMLGlob(FrontendPath + "/*.html")
-	router.Static("/static", FrontendPath)
+	router.LoadHTMLGlob(TemplatesPath + "/*.html")
+	router.Static("/static", TemplatesPath)
 }
 
 func (h *Handler) errorHandler(ctx *gin.Context, errorStatusCode int, err error) {
